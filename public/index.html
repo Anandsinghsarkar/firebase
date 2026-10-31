@@ -121,6 +121,7 @@ td.num{font-weight:600;color:var(--ok)}
     <div class="links">
       <a href="#" data-page="dashboard" class="active">👥 Users</a>
       <a href="#" data-page="top">🏆 Top Referrers</a>
+      <a href="#" data-page="database">🗄️ Database</a>
     </div>
     <button id="logoutBtn" class="logout">Logout</button>
   </nav>
@@ -194,7 +195,7 @@ document.querySelectorAll('.nav .links a').forEach(a => {
     e.preventDefault();
     document.querySelectorAll('.nav .links a').forEach(x => x.classList.remove('active'));
     a.classList.add('active');
-    if (a.dataset.page === 'top') loadTop(); else loadDashboard();
+    if (a.dataset.page === 'top') loadTop(); else if (a.dataset.page === 'database') loadDatabaseExplorer(); else loadDashboard();
   });
 });
 
@@ -391,6 +392,114 @@ async function loadTop() {
 }
 
 // ═══════════════════════════════════════
+
+ 
+// FIREBASE DATABASE EXPLORER (read-only)
+async function loadDatabaseExplorer() {
+  const root = document.getElementById('pageContent');
+  root.innerHTML = `
+    <div class="head"><h1>Firebase Database Explorer</h1><span class="count">Read-only access</span></div>
+    <div class="panel">
+      <div class="panel-title">Cloud Firestore</div>
+      <div class="btn-row" style="align-items:center">
+        <select class="input" id="collectionSelect" style="max-width:360px"><option value="">Loading collections…</option></select>
+        <button class="btn small" id="refreshCollections" type="button">Refresh</button>
+      </div>
+      <div id="firestoreStatus" class="count" style="margin-top:10px">Select a collection to view its documents.</div>
+      <div class="card" id="firestoreResults" style="margin-top:12px"><div class="empty">Choose a collection above.</div></div>
+      <button class="btn secondary small" id="loadMoreDocs" type="button" style="display:none;margin-top:10px">Load more</button>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Realtime Database</div>
+      <div class="btn-row">
+        <input class="input" id="rtdbPath" value="/" placeholder="Database path e.g. /users" style="flex:1;min-width:180px"/>
+        <button class="btn small" id="readRtdb" type="button">Read path</button>
+      </div>
+      <div id="rtdbStatus" class="count" style="margin-top:10px">Enter a path and read its JSON value.</div>
+      <pre id="rtdbResult" class="mono-box" style="white-space:pre-wrap;max-height:520px;overflow:auto;margin-top:12px">No data loaded.</pre>
+    </div>
+    <div id="docModal" style="display:none;position:fixed;inset:0;background:#000b;z-index:50;padding:16px;overflow:auto">
+      <div class="panel" style="max-width:850px;margin:5vh auto">
+        <div class="btn-row" style="justify-content:space-between;align-items:center"><div class="panel-title" id="docTitle">Document</div><button class="btn secondary small" id="closeDoc">Close</button></div>
+        <pre id="docJson" class="mono-box" style="white-space:pre-wrap;max-height:70vh;overflow:auto"></pre>
+      </div>
+    </div>`;
+  let cursor = null;
+  let selectedCollection = '';
+  const select = document.getElementById('collectionSelect');
+  const results = document.getElementById('firestoreResults');
+  const status = document.getElementById('firestoreStatus');
+  const more = document.getElementById('loadMoreDocs');
+
+  async function loadCollections() {
+    select.innerHTML = '<option value="">Loading…</option>';
+    try {
+      const data = await api('/api/firestore/collections');
+      const cols = data.collections || [];
+      select.innerHTML = '<option value="">Select collection…</option>' + cols.map(x => '<option value="' + esc(x.path) + '">' + esc(x.path) + '</option>').join('');
+      status.textContent = cols.length + ' collection(s) found.';
+      if (!cols.length) results.innerHTML = '<div class="empty">No top-level collections found.</div>';
+    } catch (e) {
+      select.innerHTML = '<option value="">Could not load collections</option>';
+      status.textContent = e.message;
+      results.innerHTML = '<div class="empty" style="color:var(--accent)">' + esc(e.message) + '</div>';
+    }
+  }
+
+  async function loadDocuments(reset = true) {
+    if (!selectedCollection) return;
+    if (reset) { cursor = null; results.innerHTML = '<div class="loading">Loading documents…</div>'; }
+    status.textContent = 'Loading ' + selectedCollection + '…';
+    try {
+      const url = '/api/firestore/documents?collection=' + encodeURIComponent(selectedCollection) + '&limit=50' + (cursor ? '&after=' + encodeURIComponent(cursor) : '');
+      const data = await api(url);
+      const docs = data.documents || [];
+      if (reset) results.innerHTML = '';
+      if (!docs.length && reset) results.innerHTML = '<div class="empty">This collection has no documents.</div>';
+      if (docs.length) {
+        const table = document.createElement('table');
+        table.innerHTML = '<thead><tr><th>Document ID</th><th>Fields</th><th></th></tr></thead><tbody>' +
+          docs.map((d, i) => '<tr><td class="mono">' + esc(d.id) + '</td><td class="muted">' + Object.keys(d.data || {}).length + ' field(s)</td><td><button class="btn secondary small" data-doc="' + i + '">View JSON</button></td></tr>').join('') +
+          '</tbody>';
+        const offset = reset ? 0 : results.querySelectorAll('tbody tr').length;
+        table.querySelectorAll('button[data-doc]').forEach((btn, i) => btn.addEventListener('click', () => {
+          const doc = docs[i];
+          document.getElementById('docTitle').textContent = doc.path;
+          document.getElementById('docJson').textContent = JSON.stringify(doc.data, null, 2);
+          document.getElementById('docModal').style.display = 'block';
+        }));
+        if (!reset && results.querySelector('table')) results.querySelector('tbody').append(...Array.from(table.querySelectorAll('tbody tr')));
+        else results.appendChild(table);
+      }
+      cursor = data.nextCursor || null;
+      more.style.display = cursor ? 'inline-block' : 'none';
+      status.textContent = docs.length + ' document(s) loaded' + (cursor ? ' — more available' : '');
+    } catch (e) {
+      results.innerHTML = '<div class="empty" style="color:var(--accent)">' + esc(e.message) + '</div>';
+      status.textContent = 'Could not load documents.';
+      more.style.display = 'none';
+    }
+  }
+
+  select.addEventListener('change', () => { selectedCollection = select.value; loadDocuments(true); });
+  document.getElementById('refreshCollections').addEventListener('click', loadCollections);
+  more.addEventListener('click', () => loadDocuments(false));
+  document.getElementById('closeDoc').addEventListener('click', () => document.getElementById('docModal').style.display = 'none');
+  document.getElementById('docModal').addEventListener('click', e => { if (e.target.id === 'docModal') e.currentTarget.style.display = 'none'; });
+  document.getElementById('readRtdb').addEventListener('click', async () => {
+    const path = document.getElementById('rtdbPath').value.trim() || '/';
+    const out = document.getElementById('rtdbResult');
+    const s = document.getElementById('rtdbStatus');
+    out.textContent = 'Loading…'; s.textContent = 'Reading ' + path;
+    try {
+      const data = await api('/api/realtime?path=' + encodeURIComponent(path));
+      out.textContent = JSON.stringify(data.value, null, 2);
+      s.textContent = data.exists ? 'Data loaded successfully.' : 'No data exists at this path.';
+    } catch (e) { out.textContent = e.message; s.textContent = 'Could not read Realtime Database.'; }
+  });
+  await loadCollections();
+}
+
 //   BOOT — try loading dashboard (cookie auth)
 // ═══════════════════════════════════════
 (async () => {
