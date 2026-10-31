@@ -437,8 +437,19 @@ async function loadDatabaseExplorer() {
       const data = await api('/api/firestore/collections');
       const cols = data.collections || [];
       select.innerHTML = '<option value="">Select collection…</option>' + cols.map(x => '<option value="' + esc(x.path) + '">' + esc(x.path) + '</option>').join('');
-      status.textContent = cols.length + ' collection(s) found.';
-      if (!cols.length) results.innerHTML = '<div class="empty">No top-level collections found.</div>';
+      status.textContent = cols.length + ' Firestore collection(s) found.';
+      if (!cols.length) {
+        results.innerHTML = '<div class="empty">No top-level Firestore collections found. Check that the service-account key belongs to the telebot-admin project and that Cloud Firestore has been created.</div>';
+        return;
+      }
+
+      // Automatically show useful bot data instead of leaving the Firestore panel blank.
+      const preferred = cols.find(x => x.path === 'users') || cols.find(x => x.path === 'refcodes') || cols[0];
+      if (preferred) {
+        selectedCollection = preferred.path;
+        select.value = preferred.path;
+        await loadDocuments(true);
+      }
     } catch (e) {
       select.innerHTML = '<option value="">Could not load collections</option>';
       status.textContent = e.message;
