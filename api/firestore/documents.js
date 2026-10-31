@@ -27,7 +27,7 @@ export default async function handler(req, res) {
     const limit = Math.min(Math.max(parseInt(req.query.limit || "50", 10) || 50, 1), 100);
     const after = String(req.query.after || "");
     let query = db.collection(path).orderBy("__name__").limit(limit);
-    if (after) query = query.startAfter(db.collection(path).doc(after));
+    if (after) { const previous = await db.collection(path).doc(after).get(); if (previous.exists) query = query.startAfter(previous); }
     const snap = await query.get();
     const docs = snap.docs.map(d => ({ id: d.id, path: d.ref.path, data: clean(d.data()) }));
     return res.json({ documents: docs, nextCursor: snap.size === limit ? snap.docs[snap.docs.length - 1].id : null });
